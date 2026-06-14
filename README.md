@@ -18,8 +18,11 @@ Unmatched paths return `404` and are not stored.
 
 ## Requirements
 
-- Go 1.25+
+- Go 1.25+ (only for building from source)
 - [Tailscale](https://tailscale.com/) with Funnel enabled on your tailnet
+- The **Tailscale CLI** (`tailscale` command). funneltap shells out to it when you add or remove routes.
+
+  On macOS, installing the menu bar app does not put `tailscale` on your `PATH`. funneltap auto-detects `/Applications/Tailscale.app/Contents/MacOS/Tailscale`. To use a different binary, set `TAILSCALE_BIN`.
 
 ## Install
 
@@ -78,6 +81,7 @@ Environment variables:
 | `MAX_REQUESTS` | `500` | Max captured requests in memory |
 | `MAX_BODY_BYTES` | `10485760` (10 MiB) | Max request body size |
 | `FUNNELTAP_ROUTES_FILE` | `/tmp/funneltap-routes.json` | Crash-recovery checkpoint file |
+| `TAILSCALE_BIN` | _(auto-detect)_ | Path to the `tailscale` CLI binary |
 
 Example:
 
