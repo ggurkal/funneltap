@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strconv"
 	"time"
@@ -16,27 +16,41 @@ import (
 	"github.com/ggurkal/funneltap/internal/store"
 )
 
+var errBodyTooLarge = errors.New("request body too large")
+
+type ctxKey struct{}
+
+type reqCtx struct {
+	id         uint64
+	mode       Mode
+	start      time.Time
+	target     *url.URL
+	statusCode int
+}
+
 type Handler struct {
 	Routes       *routes.Registry
 	Store        *store.Store
-	ProxyTimeout time.Duration
 	MaxBodyBytes int64
-	Client       *http.Client
+	proxy        *httputil.ReverseProxy
 }
 
-func NewHandler(reg *routes.Registry, st *store.Store, timeout time.Duration, maxBody int64) *Handler {
-	return &Handler{
+func NewHandler(reg *routes.Registry, st *store.Store, maxBody int64) *Handler {
+	h := &Handler{
 		Routes:       reg,
 		Store:        st,
-		ProxyTimeout: timeout,
 		MaxBodyBytes: maxBody,
-		Client: &http.Client{
-			Timeout: timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		},
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 0
+
+	h.proxy = &httputil.ReverseProxy{
+		Transport:      transport,
+		Rewrite:        h.rewrite,
+		ModifyResponse: h.modifyResponse,
+		ErrorHandler:   h.errorHandler,
+	}
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,82 +60,171 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, h.MaxBodyBytes+1))
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	if int64(len(body)) > h.MaxBodyBytes {
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
-		return
-	}
+	mode := Classify(r)
 
 	storedPath := upstreamPath
 	if r.URL.RawQuery != "" {
 		storedPath += "?" + r.URL.RawQuery
 	}
 
-	id := h.Store.Add(r.Method, storedPath, r.Header, body, route.ID, route.Path, route.Target)
-
-	targetURL, err := routes.BuildUpstreamURL(route.Target, upstreamPath, r.URL.RawQuery)
+	targetURLStr, err := routes.BuildUpstreamURL(route.Target, upstreamPath, r.URL.RawQuery)
 	if err != nil {
-		h.finishError(id, w, err)
-		return
-	}
-
-	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
-	if err != nil {
-		h.finishError(id, w, err)
-		return
-	}
-	outReq.Header = r.Header.Clone()
-	if outReq.Header == nil {
-		outReq.Header = make(http.Header)
-	}
-
-	start := time.Now()
-	resp, err := h.Client.Do(outReq)
-	duration := time.Since(start)
-
-	if err != nil {
-		proxy := store.ProxyInfo{
-			DurationMs: duration.Milliseconds(),
-			Error:      err.Error(),
-		}
-		if isTimeout(err) {
-			proxy.Status = http.StatusGatewayTimeout
-			h.Store.UpdateProxy(id, proxy)
-			http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
-			return
-		}
-		proxy.Status = http.StatusBadGateway
-		h.Store.UpdateProxy(id, proxy)
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
-
-	h.Store.UpdateProxy(id, store.ProxyInfo{
-		Status:     resp.StatusCode,
-		DurationMs: duration.Milliseconds(),
-	})
-
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
+	targetURL, err := url.Parse(targetURLStr)
+	if err != nil {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
 	}
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+
+	if mode == ModeInspect && r.ContentLength > h.MaxBodyBytes {
+		id := h.Store.Add(r.Method, storedPath, r.Header, nil, route.ID, route.Path, route.Target)
+		h.Store.UpdateProxy(id, store.ProxyInfo{
+			Status:     http.StatusRequestEntityTooLarge,
+			DurationMs: 0,
+			Error:      errBodyTooLarge.Error(),
+		})
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	var capture *captureReader
+	if mode == ModeInspect {
+		capture = newCaptureReader(r.Body, h.MaxBodyBytes)
+		r.Body = capture
+	}
+
+	id := h.Store.Add(r.Method, storedPath, r.Header, nil, route.ID, route.Path, route.Target)
+	rcx := &reqCtx{
+		id:     id,
+		mode:   mode,
+		start:  time.Now(),
+		target: targetURL,
+	}
+	if mode == ModeTunnel {
+		h.Store.UpdateProxy(id, store.ProxyInfo{Streaming: true})
+	}
+
+	r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, rcx))
+	h.proxy.ServeHTTP(w, r)
+
+	if capture != nil {
+		h.Store.FinalizeBody(id, capture.bytes())
+	}
+	if mode == ModeTunnel {
+		h.finishStream(rcx)
+	}
 }
 
-func (h *Handler) finishError(id uint64, w http.ResponseWriter, err error) {
-	h.Store.UpdateProxy(id, store.ProxyInfo{
-		Status:     http.StatusBadGateway,
-		DurationMs: 0,
+func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
+	rcx := pr.In.Context().Value(ctxKey{}).(*reqCtx)
+	// SetURL joins the incoming path with the target base path; we already
+	// computed the full upstream URL, so assign it directly.
+	pr.Out.URL.Scheme = rcx.target.Scheme
+	pr.Out.URL.Host = rcx.target.Host
+	pr.Out.URL.Path = rcx.target.Path
+	pr.Out.URL.RawPath = rcx.target.RawPath
+	pr.Out.URL.RawQuery = rcx.target.RawQuery
+	pr.Out.Host = rcx.target.Host
+}
+
+func (h *Handler) modifyResponse(resp *http.Response) error {
+	rcx := resp.Request.Context().Value(ctxKey{}).(*reqCtx)
+	rcx.statusCode = resp.StatusCode
+
+	if rcx.mode == ModeTunnel {
+		h.Store.UpdateProxy(rcx.id, store.ProxyInfo{
+			Status:    resp.StatusCode,
+			Streaming: true,
+		})
+		return nil
+	}
+
+	h.Store.UpdateProxy(rcx.id, store.ProxyInfo{
+		Status:     resp.StatusCode,
+		DurationMs: time.Since(rcx.start).Milliseconds(),
+	})
+	return nil
+}
+
+func (h *Handler) errorHandler(w http.ResponseWriter, r *http.Request, err error) {
+	rcx, _ := r.Context().Value(ctxKey{}).(*reqCtx)
+	if rcx == nil {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+
+	status := http.StatusBadGateway
+	if errors.Is(err, errBodyTooLarge) {
+		status = http.StatusRequestEntityTooLarge
+	}
+
+	h.Store.UpdateProxy(rcx.id, store.ProxyInfo{
+		Status:     status,
+		DurationMs: time.Since(rcx.start).Milliseconds(),
 		Error:      err.Error(),
 	})
-	http.Error(w, "bad gateway", http.StatusBadGateway)
+
+	if capture, ok := r.Body.(*captureReader); ok {
+		h.Store.FinalizeBody(rcx.id, capture.bytes())
+	}
+
+	http.Error(w, http.StatusText(status), status)
+}
+
+func (h *Handler) finishStream(rcx *reqCtx) {
+	now := time.Now()
+	closed := now
+	status := rcx.statusCode
+	if status == 0 {
+		status = http.StatusOK
+	}
+	h.Store.UpdateProxy(rcx.id, store.ProxyInfo{
+		Status:     status,
+		DurationMs: now.Sub(rcx.start).Milliseconds(),
+		Streaming:  false,
+		ClosedAt:   &closed,
+	})
+}
+
+type captureReader struct {
+	r       io.ReadCloser
+	buf     bytes.Buffer
+	max     int64
+	n       int64
+	tooLarge bool
+}
+
+func newCaptureReader(r io.ReadCloser, max int64) *captureReader {
+	if r == nil {
+		r = io.NopCloser(http.NoBody)
+	}
+	return &captureReader{r: r, max: max}
+}
+
+func (c *captureReader) Read(p []byte) (int, error) {
+	if c.tooLarge {
+		return 0, errBodyTooLarge
+	}
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.n += int64(n)
+		if c.n > c.max {
+			c.tooLarge = true
+			return n, errBodyTooLarge
+		}
+		_, _ = c.buf.Write(p[:n])
+	}
+	return n, err
+}
+
+func (c *captureReader) Close() error {
+	return c.r.Close()
+}
+
+func (c *captureReader) bytes() []byte {
+	return append([]byte(nil), c.buf.Bytes()...)
 }
 
 func InterceptPort(addr string) (int, error) {
@@ -134,18 +237,6 @@ func InterceptPort(addr string) (int, error) {
 		return 0, fmt.Errorf("invalid intercept port: %w", err)
 	}
 	return port, nil
-}
-
-func isTimeout(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	var urlErr *url.Error
-	return errors.As(err, &urlErr) && urlErr.Timeout()
 }
 
 func splitHostPort(addr string) (host, port string, err error) {

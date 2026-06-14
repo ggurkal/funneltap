@@ -100,12 +100,19 @@ function formatDateTime(iso) {
   });
 }
 
-function proxyListLabel(proxy) {
+function streamingLabel(receivedAt) {
+  const sec = Math.floor((Date.now() - new Date(receivedAt).getTime()) / 1000);
+  return `streaming · ${sec}s`;
+}
+
+function proxyListLabel(proxy, receivedAt) {
+  if (proxy.streaming) return streamingLabel(receivedAt);
   if (!proxy.status) return "pending";
   return `${proxy.status} · ${proxy.durationMs}ms`;
 }
 
 function proxyStatusClass(proxy) {
+  if (proxy.streaming) return "status-streaming";
   if (!proxy.status) return "status-pending";
   if (proxy.error) return "status-err";
   return "status-ok";
@@ -134,6 +141,10 @@ function createListItem(req) {
   const li = document.createElement("li");
   li.className = "request-item";
   li.dataset.id = String(req.id);
+  li.dataset.receivedAt = req.receivedAt;
+  if (req.proxy?.streaming) {
+    li.dataset.streaming = "true";
+  }
   if (req.id === selectedId) {
     li.classList.add("selected");
   }
@@ -174,7 +185,7 @@ function createListItem(req) {
 
   const status = document.createElement("span");
   status.className = proxyStatusClass(req.proxy);
-  status.textContent = proxyListLabel(req.proxy);
+  status.textContent = proxyListLabel(req.proxy, req.receivedAt);
 
   line2.append(time, status);
   li.append(line1, line2);
@@ -216,12 +227,18 @@ function updateListItem(req) {
   const item = listEl.querySelector(`[data-id="${req.id}"]`);
   if (!item) return;
   item.dataset.routeId = req.routeId || "";
+  item.dataset.receivedAt = req.receivedAt;
+  if (req.proxy?.streaming) {
+    item.dataset.streaming = "true";
+  } else {
+    delete item.dataset.streaming;
+  }
   item.hidden = !passesFilter(req);
 
   const status = item.querySelector(".line-2 span:last-child");
   if (status) {
     status.className = proxyStatusClass(req.proxy);
-    status.textContent = proxyListLabel(req.proxy);
+    status.textContent = proxyListLabel(req.proxy, req.receivedAt);
   }
 }
 
@@ -264,8 +281,12 @@ function detailStatusClass(status, error) {
   return "detail-status-other";
 }
 
-function renderBodyHtml(bodyBase64) {
+function renderBodyHtml(bodyBase64, req) {
+  const proxy = req?.proxy || {};
   if (!bodyBase64) {
+    if (proxy.streaming || proxy.closedAt) {
+      return '<p class="body-empty">Not captured (streaming connection)</p>';
+    }
     return '<p class="body-empty">Empty body</p>';
   }
   const decoded = decodeBody(bodyBase64);
@@ -297,10 +318,23 @@ async function loadDetail(id) {
   }
 }
 
+function detailStatusLabel(req) {
+  const proxy = req.proxy || {};
+  if (proxy.streaming) return streamingLabel(req.receivedAt);
+  if (!proxy.status) return "pending";
+  return String(proxy.status);
+}
+
+function detailStatusClassFor(req) {
+  const proxy = req.proxy || {};
+  if (proxy.streaming) return "detail-status-streaming";
+  return detailStatusClass(proxy.status, proxy.error);
+}
+
 function renderDetail(req) {
   const proxy = req.proxy || {};
-  const statusLabel = proxy.status ? String(proxy.status) : "pending";
-  const statusClass = detailStatusClass(proxy.status, proxy.error);
+  const statusLabel = detailStatusLabel(req);
+  const statusClass = detailStatusClassFor(req);
   const routeBadge = req.routeId
     ? `<span class="route-badge detail-route-badge" style="color:${routeAccentColor(req.routeId)};background:${routeBadgeBackground(req.routeId)}">${escapeHtml(routeLabel(req))}</span>`
     : "";
@@ -325,28 +359,41 @@ function renderDetail(req) {
 
     <section>
       <h2>Body</h2>
-      ${renderBodyHtml(req.bodyBase64)}
+      ${renderBodyHtml(req.bodyBase64, req)}
     </section>
   `;
 }
 
-async function refreshPending() {
-  const pending = [...listEl.querySelectorAll(".status-pending")]
+async function refreshActive() {
+  const activeIds = [...listEl.querySelectorAll("[data-streaming='true'], .status-pending")]
     .map((el) => el.closest(".request-item")?.dataset.id)
     .filter(Boolean);
-  if (pending.length === 0) return;
+  if (activeIds.length === 0) return;
 
   const url = filterRouteId ? `/requests?route=${encodeURIComponent(filterRouteId)}` : "/requests";
   const res = await fetch(url);
   if (!res.ok) return;
   const items = await res.json();
   for (const req of items) {
-    if (!pending.includes(String(req.id))) continue;
+    if (!activeIds.includes(String(req.id))) continue;
     updateListItem(req);
-    if (selectedId === req.id && req.proxy?.status) {
+    if (selectedId === req.id && !req.proxy?.streaming && req.proxy?.status) {
       await loadDetail(req.id);
     }
   }
+}
+
+function tickStreamingLabels() {
+  for (const item of listEl.querySelectorAll('[data-streaming="true"]')) {
+    const status = item.querySelector(".line-2 span:last-child");
+    if (status) status.textContent = streamingLabel(item.dataset.receivedAt);
+  }
+
+  if (!selectedId) return;
+  const selected = listEl.querySelector(`[data-id="${selectedId}"][data-streaming="true"]`);
+  if (!selected) return;
+  const el = detailEl.querySelector(".detail-status");
+  if (el) el.textContent = streamingLabel(selected.dataset.receivedAt);
 }
 
 async function poll() {
@@ -375,7 +422,8 @@ async function poll() {
       prependRequests(items);
     }
 
-    await refreshPending();
+    await refreshActive();
+    tickStreamingLabels();
 
     statusEl.textContent = `${knownIds.size} request(s) · ${routes.length} route(s) · polling every 1s`;
   } catch (err) {

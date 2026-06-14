@@ -6,21 +6,18 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"time"
 )
 
 const (
 	DefaultAPIPort      = 9000
 	DefaultMaxRequests  = 500
 	DefaultMaxBodyBytes = 10 << 20 // 10 MiB
-	DefaultProxyTimeout = 30 * time.Second
 )
 
 type Config struct {
 	InterceptAddr string
 	InterceptPort int
 	APIAddr       string
-	ProxyTimeout  time.Duration
 	MaxRequests   int
 	MaxBodyBytes  int64
 	RoutesFile    string
@@ -38,15 +35,6 @@ func Load() (*Config, error) {
 	}
 	if apiPort == 0 {
 		apiPort = DefaultAPIPort
-	}
-
-	proxyTimeout := DefaultProxyTimeout
-	if v := os.Getenv("PROXY_TIMEOUT"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return nil, fmt.Errorf("PROXY_TIMEOUT: %w", err)
-		}
-		proxyTimeout = d
 	}
 
 	maxRequests := DefaultMaxRequests
@@ -82,7 +70,6 @@ func Load() (*Config, error) {
 		InterceptAddr: net.JoinHostPort("127.0.0.1", strconv.Itoa(interceptPort)),
 		InterceptPort: interceptPort,
 		APIAddr:       net.JoinHostPort("0.0.0.0", strconv.Itoa(apiPort)),
-		ProxyTimeout:  proxyTimeout,
 		MaxRequests:   maxRequests,
 		MaxBodyBytes:  maxBody,
 		RoutesFile:    routesFile,

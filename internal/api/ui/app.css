@@ -266,6 +266,7 @@ header.app-header .meta {
 .status-ok { color: var(--pico-ins-color); }
 .status-err { color: var(--pico-del-color); }
 .status-pending { color: var(--pico-muted-color); }
+.status-streaming { color: var(--pico-primary); }
 
 .detail {
   flex: 1;
@@ -323,6 +324,7 @@ header.app-header .meta {
 .detail-status-4xx { background: #c78400; }
 .detail-status-5xx { background: var(--pico-del-color); }
 .detail-status-pending { background: var(--pico-muted-color); }
+.detail-status-streaming { background: var(--pico-primary-background); color: var(--pico-primary-inverse); }
 .detail-status-other { background: var(--pico-muted-border-color); color: var(--pico-color); }
 
 .detail-method {

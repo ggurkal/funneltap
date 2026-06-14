@@ -43,7 +43,7 @@ func main() {
 	recovery := &routes.RecoveryFile{Path: cfg.RoutesFile}
 	reg := routes.NewRegistry(cfg.InterceptPort, funnelCLI, funnel.MachineHTTPSURL, recovery)
 
-	interceptHandler := intercept.NewHandler(reg, st, cfg.ProxyTimeout, cfg.MaxBodyBytes)
+	interceptHandler := intercept.NewHandler(reg, st, cfg.MaxBodyBytes)
 	interceptServer := &http.Server{
 		Addr:    cfg.InterceptAddr,
 		Handler: interceptHandler,

@@ -8,9 +8,11 @@ import (
 )
 
 type ProxyInfo struct {
-	Status     int    `json:"status"`
-	DurationMs int64  `json:"durationMs"`
-	Error      string `json:"error,omitempty"`
+	Status     int        `json:"status"`
+	DurationMs int64      `json:"durationMs"`
+	Error      string     `json:"error,omitempty"`
+	Streaming  bool       `json:"streaming,omitempty"`
+	ClosedAt   *time.Time `json:"closedAt,omitempty"`
 }
 
 type Entry struct {
@@ -71,6 +73,18 @@ func (s *Store) Add(method, path string, headers http.Header, body []byte, route
 	}
 
 	return entry.ID
+}
+
+func (s *Store) FinalizeBody(id uint64, body []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, e := range s.entries {
+		if e.ID == id {
+			e.Body = append([]byte(nil), body...)
+			return
+		}
+	}
 }
 
 func (s *Store) UpdateProxy(id uint64, proxy ProxyInfo) {

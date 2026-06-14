@@ -77,7 +77,6 @@ Environment variables:
 |----------|---------|-------------|
 | `PORT` | random ephemeral port | Intercept server port (localhost only) |
 | `API_PORT` | `9000` | API and UI port |
-| `PROXY_TIMEOUT` | `30s` | Upstream proxy timeout |
 | `MAX_REQUESTS` | `500` | Max captured requests in memory |
 | `MAX_BODY_BYTES` | `10485760` (10 MiB) | Max request body size |
 | `FUNNELTAP_ROUTES_FILE` | `/tmp/funneltap-routes.json` | Crash-recovery checkpoint file |
