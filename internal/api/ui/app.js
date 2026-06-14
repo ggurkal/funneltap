@@ -341,8 +341,10 @@ async function refreshPending() {
   if (!res.ok) return;
   const items = await res.json();
   for (const req of items) {
-    if (pending.includes(String(req.id))) {
-      updateListItem(req);
+    if (!pending.includes(String(req.id))) continue;
+    updateListItem(req);
+    if (selectedId === req.id && req.proxy?.status) {
+      await loadDetail(req.id);
     }
   }
 }
