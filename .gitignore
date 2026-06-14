@@ -12,6 +12,7 @@
 *.out
 coverage.*
 coverage/
+dist/
 
 # Dependencies (keep internal/api/ui/vendor/ — frontend assets, not Go modules)
 /vendor/

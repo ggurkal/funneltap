@@ -23,6 +23,10 @@ Unmatched paths return `404` and are not stored.
 
 ## Install
 
+Download a binary for Linux or macOS from the [GitHub releases](https://github.com/ggurkal/funneltap/releases) page.
+
+Or install with Go:
+
 ```bash
 go install github.com/ggurkal/funneltap/cmd/funneltap@latest
 ```
