@@ -1,12 +1,16 @@
 :root {
   --sidebar-width: 320px;
-  --selected-bg: var(--pico-primary-background);
-  --selected-fg: var(--pico-primary-inverse);
   --row-hover: var(--pico-muted-border-color);
+  --ft-font-size: 14px;
+  --pico-font-size: var(--ft-font-size);
   --ft-mono: "Berkeley Mono", "BerkeleyMono", "IBM Plex Mono", "IBMPlexMono", "JetBrains Mono", "JetBrainsMono", "Fira Code", "FiraCode", ui-monospace, monospace;
   --pico-font-family-sans-serif: var(--ft-mono);
   --pico-font-family-monospace: var(--ft-mono);
   --pico-font-family: var(--ft-mono);
+}
+
+html {
+  font-size: var(--ft-font-size);
 }
 
 body {
@@ -56,13 +60,151 @@ header.app-header .meta {
 .sidebar-toolbar {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--pico-muted-border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
-.sidebar-toolbar button {
+.sidebar-toolbar-routes {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sidebar-toolbar button,
+.sidebar-toolbar select {
   width: 100%;
   margin: 0;
   padding: 0.35rem 0.5rem;
   font-size: 0.85rem;
+}
+
+.sidebar-toolbar-routes select {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-toolbar-routes button {
+  flex-shrink: 0;
+  width: auto;
+}
+
+.request-item .route-badge,
+.detail-route-badge {
+  flex-shrink: 0;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--pico-border-radius) 0 0 var(--pico-border-radius);
+  font-weight: 600;
+}
+
+.path-combo {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--ft-mono);
+}
+
+.path-combo .path,
+.path-combo .detail-path {
+  margin-left: -0.3rem;
+}
+
+.path-combo .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routes-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+
+.routes-list li {
+  list-style: none;
+}
+
+.routes-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-size: 0.85rem;
+}
+
+.routes-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.routes-item-main a {
+  font-size: 0.75rem;
+  word-break: break-all;
+}
+
+.routes-delete {
+  flex-shrink: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.routes-empty {
+  color: var(--pico-muted-color);
+  font-style: italic;
+  padding: 0.5rem 0;
+  list-style: none;
+  list-style-type: none;
+}
+
+.routes-empty::marker {
+  content: none;
+}
+
+.form-error {
+  color: var(--pico-del-color);
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.recovery-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+#routes-dialog article,
+#recovery-dialog article {
+  min-width: min(520px, 92vw);
+}
+
+#routes-dialog article > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pico-spacing);
+}
+
+#routes-dialog article > header h2 {
+  margin: 0;
+}
+
+#routes-dialog article > header .close-routes {
+  float: none;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+#routes-dialog article footer button {
+  margin-bottom: 0;
 }
 
 .request-list {
@@ -87,8 +229,7 @@ header.app-header .meta {
 }
 
 .request-item.selected {
-  background: var(--selected-bg);
-  color: var(--selected-fg);
+  background: rgba(127, 127, 127, 0.18);
 }
 
 .request-item .line-1 {
@@ -105,10 +246,13 @@ header.app-header .meta {
 }
 
 .request-item .path {
+  font-family: var(--ft-mono);
+}
+
+.request-item .path-combo .path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--ft-mono);
 }
 
 .request-item .line-2 {
@@ -117,12 +261,6 @@ header.app-header .meta {
   margin-top: 0.2rem;
   font-size: 0.75rem;
   opacity: 0.85;
-}
-
-.request-item.selected .line-2,
-.request-item.selected .line-2 span {
-  color: var(--selected-fg);
-  opacity: 1;
 }
 
 .status-ok { color: var(--pico-ins-color); }
@@ -193,6 +331,12 @@ header.app-header .meta {
 }
 
 .detail-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-combo .detail-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

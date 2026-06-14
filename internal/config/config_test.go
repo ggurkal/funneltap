@@ -1,7 +1,6 @@
 package config
 
 import (
-	"net/url"
 	"testing"
 )
 
@@ -10,14 +9,15 @@ func TestParseTarget(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"8000", "http://127.0.0.1:8000"},
-		{":8000", "http://127.0.0.1:8000"},
+		{"8080", "http://localhost:8080"},
+		{":8080", "http://localhost:8080"},
+		{"192.168.0.1", "http://192.168.0.1"},
+		{"192.168.0.1:8080", "http://192.168.0.1:8080"},
+		{"https://test.com", "https://test.com"},
+		{"https://test.com:8080", "https://test.com:8080"},
 		{"localhost:3002", "http://localhost:3002"},
-		{"api.example.com", "http://api.example.com:80"},
-		{"https://localhost:3002", "https://localhost:3002"},
-		{"https://localhost", "https://localhost:443"},
-		{"http://api.internal", "http://api.internal:80"},
-		{"https://example.com/api/extra", "https://example.com:443"},
+		{"api.example.com", "http://api.example.com"},
+		{"http://api.internal:8080", "http://api.internal:8080"},
 	}
 
 	for _, tt := range tests {
@@ -25,23 +25,14 @@ func TestParseTarget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseTarget(%q): %v", tt.in, err)
 		}
-		if u.String() != tt.want {
-			t.Fatalf("ParseTarget(%q) = %q, want %q", tt.in, u.String(), tt.want)
+		if got := FormatTarget(u); got != tt.want {
+			t.Fatalf("ParseTarget(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
 
-func TestParseTargetOriginOnly(t *testing.T) {
-	raw := "https://example.com/ignored/path"
-	u, err := ParseTarget(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.Path != "" {
-		t.Fatalf("expected empty path, got %q", u.Path)
-	}
-	origin := &url.URL{Scheme: u.Scheme, Host: u.Host}
-	if origin.String() != "https://example.com:443" {
-		t.Fatalf("unexpected origin %q", origin.String())
+func TestParseTargetRejectsEmpty(t *testing.T) {
+	if _, err := ParseTarget(""); err == nil {
+		t.Fatal("expected error")
 	}
 }

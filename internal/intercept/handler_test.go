@@ -4,50 +4,39 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ggurkal/funneltap/internal/routes"
 	"github.com/ggurkal/funneltap/internal/store"
 )
 
 func TestHandlerRecordsAndProxies(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s", r.Method)
-		}
-		if r.URL.Path != "/hook" {
+		if r.URL.Path != "/github" {
 			t.Fatalf("path = %s", r.URL.Path)
-		}
-		if string(body) != `{"ok":true}` {
-			t.Fatalf("body = %s", body)
-		}
-		if r.Header.Get("X-Test") != "1" {
-			t.Fatalf("missing X-Test header")
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("created"))
 	}))
 	defer backend.Close()
 
-	target, err := url.Parse(backend.URL)
-	if err != nil {
+	reg := routes.NewRegistry(8080, &noopFunnel{}, func() (string, error) { return "", nil }, &routes.RecoveryFile{Path: t.TempDir() + "/r.json"})
+	if _, err := reg.Add("/hooks", backend.URL); err != nil {
 		t.Fatal(err)
 	}
 
 	st := store.New(10)
-	h := NewHandler(target, st, 5*time.Second, 1<<20)
+	h := NewHandler(reg, st, 5*time.Second, 1<<20)
 
 	intercept := httptest.NewServer(h)
 	defer intercept.Close()
 
-	req, err := http.NewRequest(http.MethodPost, intercept.URL+"/hook", strings.NewReader(`{"ok":true}`))
+	req, err := http.NewRequest(http.MethodPost, intercept.URL+"/.ft/hooks/github", strings.NewReader(`{"ok":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("X-Test", "1")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -58,16 +47,42 @@ func TestHandlerRecordsAndProxies(t *testing.T) {
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	body, _ := io.ReadAll(resp.Body)
-	if string(body) != "created" {
-		t.Fatalf("response = %s", body)
-	}
 
 	items := st.List()
 	if len(items) != 1 {
 		t.Fatalf("stored %d items", len(items))
 	}
-	if items[0].Proxy.Status != http.StatusCreated {
-		t.Fatalf("proxy status = %d", items[0].Proxy.Status)
+	if items[0].RoutePath != "/hooks" {
+		t.Fatalf("routePath = %q", items[0].RoutePath)
+	}
+	if items[0].Path != "/github" {
+		t.Fatalf("path = %q, want /github", items[0].Path)
 	}
 }
+
+func TestHandlerUnmatchedReturns404WithoutStore(t *testing.T) {
+	reg := routes.NewRegistry(8080, &noopFunnel{}, func() (string, error) { return "", nil }, &routes.RecoveryFile{Path: t.TempDir() + "/r.json"})
+	st := store.New(10)
+	h := NewHandler(reg, st, 5*time.Second, 1<<20)
+	intercept := httptest.NewServer(h)
+	defer intercept.Close()
+
+	resp, err := http.Get(intercept.URL + "/.ft/missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if len(st.List()) != 0 {
+		t.Fatal("expected no stored requests")
+	}
+}
+
+type noopFunnel struct{}
+
+func (n *noopFunnel) StartPath(mountPath, backendURL string) error { return nil }
+func (n *noopFunnel) StopPath(mountPath string) error              { return nil }

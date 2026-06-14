@@ -18,6 +18,9 @@ type Entry struct {
 	ReceivedAt time.Time   `json:"receivedAt"`
 	Method     string      `json:"method"`
 	Path       string      `json:"path"`
+	RouteID    string      `json:"routeId,omitempty"`
+	RoutePath  string      `json:"routePath,omitempty"`
+	Target     string      `json:"target,omitempty"`
 	Headers    http.Header `json:"headers,omitempty"`
 	Body       []byte      `json:"-"`
 	Proxy      ProxyInfo   `json:"proxy"`
@@ -28,6 +31,9 @@ type Summary struct {
 	ReceivedAt time.Time `json:"receivedAt"`
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
+	RouteID    string    `json:"routeId,omitempty"`
+	RoutePath  string    `json:"routePath,omitempty"`
+	Target     string    `json:"target,omitempty"`
 	Proxy      ProxyInfo `json:"proxy"`
 }
 
@@ -42,7 +48,7 @@ func New(maxEntries int) *Store {
 	return &Store{maxEntries: maxEntries}
 }
 
-func (s *Store) Add(method, path string, headers http.Header, body []byte) uint64 {
+func (s *Store) Add(method, path string, headers http.Header, body []byte, routeID, routePath, target string) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -52,6 +58,9 @@ func (s *Store) Add(method, path string, headers http.Header, body []byte) uint6
 		ReceivedAt: time.Now().UTC(),
 		Method:     method,
 		Path:       path,
+		RouteID:    routeID,
+		RoutePath:  routePath,
+		Target:     target,
 		Headers:    cloneHeader(headers),
 		Body:       append([]byte(nil), body...),
 	}
@@ -91,13 +100,13 @@ func (s *Store) Get(id uint64) (*Entry, bool) {
 func (s *Store) List() []Summary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return summariesFrom(s.entries, 0)
+	return summariesFrom(s.entries, 0, "")
 }
 
-func (s *Store) ListAfter(after uint64) []Summary {
+func (s *Store) ListAfter(after uint64, routeID string) []Summary {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return summariesFrom(s.entries, after)
+	return summariesFrom(s.entries, after, routeID)
 }
 
 func (s *Store) Clear() {
@@ -106,11 +115,14 @@ func (s *Store) Clear() {
 	s.entries = nil
 }
 
-func summariesFrom(entries []*Entry, after uint64) []Summary {
+func summariesFrom(entries []*Entry, after uint64, routeID string) []Summary {
 	var out []Summary
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		if e.ID <= after {
+			continue
+		}
+		if routeID != "" && e.RouteID != routeID {
 			continue
 		}
 		out = append(out, e.summary())
@@ -127,6 +139,9 @@ func (e *Entry) summary() Summary {
 		ReceivedAt: e.ReceivedAt,
 		Method:     e.Method,
 		Path:       e.Path,
+		RouteID:    e.RouteID,
+		RoutePath:  e.RoutePath,
+		Target:     e.Target,
 		Proxy:      e.Proxy,
 	}
 }

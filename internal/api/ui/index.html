@@ -22,6 +22,12 @@
   <div class="app">
     <aside class="sidebar">
       <div class="sidebar-toolbar">
+        <div class="sidebar-toolbar-routes">
+          <select id="route-filter" aria-label="Filter by route">
+            <option value="">All routes</option>
+          </select>
+          <button type="button" class="secondary outline" id="routes-btn">Routes</button>
+        </div>
         <button type="button" class="secondary outline" id="clear-btn">Clear requests</button>
       </div>
       <ul class="request-list" id="request-list"></ul>
@@ -31,6 +37,44 @@
       <div class="detail-empty">Select a request from the list</div>
     </main>
   </div>
+
+  <dialog id="routes-dialog">
+    <article>
+      <header>
+        <h2>Routes</h2>
+        <button type="button" aria-label="Close" rel="prev" class="close-routes"></button>
+      </header>
+      <div id="routes-error" class="form-error" hidden></div>
+      <ul id="routes-list" class="routes-list"></ul>
+      <form id="add-route-form">
+        <label>
+          Path
+          <input type="text" id="route-path" placeholder="/hooks" required>
+        </label>
+        <label>
+          Target
+          <input type="text" id="route-target" placeholder="localhost:3000" required>
+        </label>
+        <footer>
+          <button type="submit">Add route</button>
+        </footer>
+      </form>
+    </article>
+  </dialog>
+
+  <dialog id="recovery-dialog">
+    <article>
+      <header>
+        <h2>Recover routes?</h2>
+      </header>
+      <p id="recovery-message"></p>
+      <ul id="recovery-list" class="routes-list"></ul>
+      <footer class="recovery-actions">
+        <button type="button" class="secondary outline" id="recovery-dismiss">Dismiss</button>
+        <button type="button" id="recovery-restore">Recover</button>
+      </footer>
+    </article>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

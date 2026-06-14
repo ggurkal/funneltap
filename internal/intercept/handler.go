@@ -12,20 +12,21 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ggurkal/funneltap/internal/routes"
 	"github.com/ggurkal/funneltap/internal/store"
 )
 
 type Handler struct {
-	Target       *url.URL
+	Routes       *routes.Registry
 	Store        *store.Store
 	ProxyTimeout time.Duration
 	MaxBodyBytes int64
 	Client       *http.Client
 }
 
-func NewHandler(target *url.URL, st *store.Store, timeout time.Duration, maxBody int64) *Handler {
+func NewHandler(reg *routes.Registry, st *store.Store, timeout time.Duration, maxBody int64) *Handler {
 	return &Handler{
-		Target:       target,
+		Routes:       reg,
 		Store:        st,
 		ProxyTimeout: timeout,
 		MaxBodyBytes: maxBody,
@@ -39,6 +40,12 @@ func NewHandler(target *url.URL, st *store.Store, timeout time.Duration, maxBody
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	route, upstreamPath, ok := h.Routes.Match(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.MaxBodyBytes+1))
 	if err != nil {
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
@@ -49,14 +56,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := r.URL.Path
+	storedPath := upstreamPath
 	if r.URL.RawQuery != "" {
-		path += "?" + r.URL.RawQuery
+		storedPath += "?" + r.URL.RawQuery
 	}
 
-	id := h.Store.Add(r.Method, path, r.Header, body)
+	id := h.Store.Add(r.Method, storedPath, r.Header, body, route.ID, route.Path, route.Target)
 
-	targetURL := buildTargetURL(h.Target, r)
+	targetURL, err := routes.BuildUpstreamURL(route.Target, upstreamPath, r.URL.RawQuery)
+	if err != nil {
+		h.finishError(id, w, err)
+		return
+	}
+
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
 		h.finishError(id, w, err)
@@ -110,14 +122,6 @@ func (h *Handler) finishError(id uint64, w http.ResponseWriter, err error) {
 		Error:      err.Error(),
 	})
 	http.Error(w, "bad gateway", http.StatusBadGateway)
-}
-
-func buildTargetURL(origin *url.URL, incoming *http.Request) string {
-	u := *origin
-	u.Path = incoming.URL.Path
-	u.RawQuery = incoming.URL.RawQuery
-	u.Fragment = ""
-	return u.String()
 }
 
 func InterceptPort(addr string) (int, error) {
